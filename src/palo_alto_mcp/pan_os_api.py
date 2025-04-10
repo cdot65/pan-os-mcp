@@ -1,19 +1,25 @@
-"""Palo Alto Networks XML API client module."""
+"""PAN-OS XML API client implementation."""
 
 import logging
-import xml.etree.ElementTree as ElementTree
-from typing import TypeVar
+from typing import Any, TypeVar
+from xml.etree import ElementTree
 
 import httpx
 
 from palo_alto_mcp.config import Settings
+from palo_alto_mcp.models import (
+    AddressObject,
+    PanosError,
+    PanosOperationError,
+    SystemInfo,
+)
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
 
-class PanOSAPIClient:
+class PanosApiClient:
     """Client for interacting with the Palo Alto Networks XML API.
 
     This class provides methods for retrieving data from a Palo Alto Networks
@@ -27,7 +33,7 @@ class PanOSAPIClient:
     """
 
     def __init__(self, settings: Settings) -> None:
-        """Initialize the PanOSAPIClient.
+        """Initialize the PanosApiClient.
 
         Args:
             settings: Application settings containing NGFW connection information.
@@ -38,12 +44,11 @@ class PanOSAPIClient:
         self.base_url = f"https://{self.hostname}/api/"
         self.client = httpx.AsyncClient(verify=False)  # In production, use proper cert verification
 
-    async def __aenter__(self) -> "PanOSAPIClient":
-        """Async context manager entry.
+    async def __aenter__(self) -> "PanosApiClient":
+        """Enter the async context manager.
 
         Returns:
-            The PanOSAPIClient instance.
-
+            The client instance.
         """
         return self
 
@@ -51,15 +56,14 @@ class PanOSAPIClient:
         self,
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
-        exc_tb: object,
+        exc_tb: ElementTree.Element | None,
     ) -> None:
-        """Async context manager exit.
+        """Exit the async context manager.
 
         Args:
-            exc_type: The exception type, if any.
-            exc_val: The exception value, if any.
-            exc_tb: The exception traceback, if any.
-
+            exc_type: Exception type if an exception was raised
+            exc_val: Exception value if an exception was raised
+            exc_tb: Exception traceback if an exception was raised
         """
         await self.close()
 
@@ -118,11 +122,11 @@ class PanOSAPIClient:
             logger.error(f"Unexpected error: {str(e)}")
             raise Exception(f"Unexpected error: {str(e)}") from e
 
-    async def get_system_info(self) -> dict[str, str]:
+    async def get_system_info(self) -> SystemInfo:
         """Get system information from the firewall.
 
         Returns:
-            Dictionary containing system information.
+            SystemInfo object containing system information.
 
         """
         # Use the correct XML command format that works with this firewall
@@ -135,43 +139,50 @@ class PanOSAPIClient:
             raise ValueError("No system information found in response")
 
         # Extract system information
-        system_info = {}
+        system_info_dict: dict[str, Any] = {
+            "hostname": "",
+            "ip_address": "",
+            "netmask": "",
+            "default_gateway": "",
+            "mac_address": "",
+            "time": "",
+            "uptime": "",
+            "version": "",
+            "gp_version": None,
+        }
 
         # Handle the case where result has a 'system' child element
         system_elem = result.find("system")
         if system_elem is not None:
             for child in system_elem:
-                if child.text is not None:
-                    system_info[child.tag] = child.text
-                else:
-                    system_info[child.tag] = ""
+                if child.text is not None and child.tag in system_info_dict:
+                    system_info_dict[child.tag] = child.text
         else:
             # Handle the case where result contains the system info directly
             for child in result:
-                if child.text is not None:
-                    system_info[child.tag] = child.text
-                else:
-                    system_info[child.tag] = ""
+                if child.text is not None and child.tag in system_info_dict:
+                    system_info_dict[child.tag] = child.text
 
-        # If no system info was found, add a default message
-        if not system_info:
-            system_info["status"] = "Connected to firewall, but no detailed system information available"
+        # Create and return the SystemInfo object
+        return SystemInfo(**system_info_dict)
 
-        return system_info
-
-    async def get_address_objects(self) -> list[dict[str, str]]:
+    async def get_address_objects(self) -> list[AddressObject]:
         """Get address objects configured on the firewall.
 
         Returns:
-            List of dictionaries containing address object information.
-            Each dictionary contains name, type, value, and optionally description and location.
+            List of AddressObject objects containing address object information.
+            Each object contains name, type, value, and optionally description and location.
 
         """
         address_objects = []
         logger.info("Retrieving address objects from Panorama")
 
         # 1. Get shared address objects
-        shared_params = {"type": "config", "action": "get", "xpath": "/config/shared/address"}
+        shared_params = {
+            "type": "config",
+            "action": "get",
+            "xpath": "/config/shared/address",
+        }
         try:
             logger.info("Retrieving shared address objects")
             root = await self._make_request(shared_params)
@@ -183,7 +194,13 @@ class PanOSAPIClient:
             logger.info(f"Found {len(shared_entries)} shared address objects")
 
             for entry in shared_entries:
-                address_obj = {"name": entry.get("name") or "", "location": "shared"}
+                address_obj = AddressObject(
+                    name=entry.get("name") or "",
+                    location="shared",
+                    type="ip-netmask",  # default type
+                    value="",  # will be updated in _process_address_entry
+                    description=None,
+                )
 
                 # Process the address object
                 address_objects.append(self._process_address_entry(entry, address_obj))
@@ -195,7 +212,11 @@ class PanOSAPIClient:
         try:
             # First, get the list of device groups
             logger.info("Retrieving device groups")
-            dg_list_params = {"type": "config", "action": "get", "xpath": "/config/devices/entry/device-group"}
+            dg_list_params = {
+                "type": "config",
+                "action": "get",
+                "xpath": "/config/devices/entry/device-group",
+            }
             dg_root = await self._make_request(dg_list_params)
 
             # Log the structure of the response for debugging
@@ -230,7 +251,13 @@ class PanOSAPIClient:
                     logger.info(f"Found {len(dg_entries)} address objects in device group '{dg_name}'")
 
                     for entry in dg_entries:
-                        address_obj = {"name": entry.get("name") or "", "location": f"device-group:{dg_name}"}
+                        address_obj = AddressObject(
+                            name=entry.get("name") or "",
+                            location=f"device-group:{dg_name}",
+                            type="ip-netmask",  # default type
+                            value="",  # will be updated in _process_address_entry
+                            description=None,
+                        )
 
                         # Process the address object
                         address_objects.append(self._process_address_entry(entry, address_obj))
@@ -243,7 +270,11 @@ class PanOSAPIClient:
 
         # 3. Get vsys address objects (for backward compatibility with firewalls)
         logger.info("Retrieving vsys address objects (for backward compatibility)")
-        vsys_params = {"type": "config", "action": "get", "xpath": "/config/devices/entry/vsys/entry/address"}
+        vsys_params = {
+            "type": "config",
+            "action": "get",
+            "xpath": "/config/devices/entry/vsys/entry/address",
+        }
         try:
             root = await self._make_request(vsys_params)
             vsys_entries = root.findall(".//entry")
@@ -254,7 +285,13 @@ class PanOSAPIClient:
             for entry in vsys_entries:
                 # Default to "unknown" if we can't determine the vsys name
                 vsys_name = "unknown"
-                address_obj = {"name": entry.get("name") or "", "location": f"vsys:{vsys_name}"}
+                address_obj = AddressObject(
+                    name=entry.get("name") or "",
+                    location=f"vsys:{vsys_name}",
+                    type="ip-netmask",  # default type
+                    value="",  # will be updated in _process_address_entry
+                    description=None,
+                )
 
                 # Process the address object
                 address_objects.append(self._process_address_entry(entry, address_obj))
@@ -266,143 +303,164 @@ class PanOSAPIClient:
         logger.info(f"Total address objects found: {len(address_objects)}")
         return address_objects
 
-    def _process_address_entry(self, entry: ElementTree.Element, address_obj: dict[str, str]) -> dict[str, str]:
-        """Process an address entry XML element and extract its properties.
+    def _process_address_entry(self, entry: ElementTree.Element, address_obj: AddressObject) -> AddressObject:
+        """Process an address object entry from the XML response.
 
         Args:
-            entry: The XML element representing an address object
-            address_obj: Partially populated address object dictionary
+            entry: XML element containing address object information
+            address_obj: Existing AddressObject to update
 
         Returns:
-            Fully populated address object dictionary
+            Updated AddressObject
+
         """
-        # Check for different address types
-        ip_netmask = entry.find("ip-netmask")
-        if ip_netmask is not None and ip_netmask.text is not None:
-            address_obj["type"] = "ip-netmask"
-            address_obj["value"] = ip_netmask.text
-        elif (ip_range := entry.find("ip-range")) is not None and ip_range.text is not None:
-            address_obj["type"] = "ip-range"
-            address_obj["value"] = ip_range.text
-        elif (fqdn := entry.find("fqdn")) is not None and fqdn.text is not None:
-            address_obj["type"] = "fqdn"
-            address_obj["value"] = fqdn.text
+        # Create a dictionary to store the updates
+        updates: dict[str, Any] = {
+            "name": address_obj.name,
+            "location": address_obj.location,
+            "type": address_obj.type,
+            "value": "",  # will be updated below
+            "description": None,
+            "tags": [],
+        }
+
+        # Process type and value
+        if entry.find("ip-netmask") is not None:
+            updates["type"] = "ip-netmask"
+            value_elem = entry.find("ip-netmask")
+        elif entry.find("ip-range") is not None:
+            updates["type"] = "ip-range"
+            value_elem = entry.find("ip-range")
+        elif entry.find("fqdn") is not None:
+            updates["type"] = "fqdn"
+            value_elem = entry.find("fqdn")
         else:
-            address_obj["type"] = "unknown"
-            address_obj["value"] = ""
+            logger.warning(f"Unknown address type for entry: {entry.get('name')}")
+            return address_obj
 
-        # Get description if available
+        # Get the value
+        if value_elem is not None and value_elem.text:
+            updates["value"] = value_elem.text
+
+        # Get description if present
         description = entry.find("description")
-        if description is not None and description.text is not None:
-            address_obj["description"] = description.text
+        if description is not None and description.text:
+            updates["description"] = description.text
 
-        # Get tags if available
-        tags = []
-        tag_elements = entry.findall("tag/member")
-        if tag_elements:
-            for tag in tag_elements:
-                if tag.text:
-                    tags.append(tag.text)
-            if tags:
-                address_obj["tags"] = ", ".join(tags)
+        # Process tags
+        tag_elems = entry.findall(".//member")
+        if tag_elems:
+            updates["tags"] = [tag.text for tag in tag_elems if tag.text is not None]
 
-        return address_obj
+        # Create a new AddressObject with the updates
+        return AddressObject(**updates)
 
-    async def get_security_zones(self) -> list[dict[str, str]]:
-        """Get security zones configured on the firewall.
+    async def get_security_zones(self) -> list[dict[str, Any]]:
+        """Get security zones from the firewall.
 
         Returns:
-            List of dictionaries containing security zone information.
+            List of security zone dictionaries.
 
+        Raises:
+            PanosConnectionError: If connection to the firewall fails
+            PanosAuthenticationError: If authentication fails
+            PanosOperationError: If the operation fails
         """
-        params = {"type": "config", "action": "get", "xpath": "/config/devices/entry/vsys/entry/zone"}
+        try:
+            response = await self._make_request(
+                {
+                    "type": "config",
+                    "action": "get",
+                    "xpath": "/config/devices/entry/vsys/entry/zone",
+                }
+            )
 
-        root = await self._make_request(params)
-        entries = root.findall(".//entry")
+            # Extract zones from the response
+            zones = response.findall(".//entry")
+            if not zones:
+                return []
 
-        zones = []
-        for entry in entries:
-            zone = {"name": entry.get("name") or ""}
+            # Ensure we have a list of zones
+            if not isinstance(zones, list):
+                zones = [zones]
 
-            # Get zone type
-            if entry.find("network/layer3") is not None:
-                zone["type"] = "layer3"
-                interfaces = entry.findall(".//member")
-                zone["interfaces"] = ",".join([interface.text for interface in interfaces if interface.text])
-            elif entry.find("network/layer2") is not None:
-                zone["type"] = "layer2"
-                interfaces = entry.findall(".//member")
-                zone["interfaces"] = ",".join([interface.text for interface in interfaces if interface.text])
-            elif entry.find("network/virtual-wire") is not None:
-                zone["type"] = "virtual-wire"
-                interfaces = entry.findall(".//member")
-                zone["interfaces"] = ",".join([interface.text for interface in interfaces if interface.text])
-            elif entry.find("network/tap") is not None:
-                zone["type"] = "tap"
-                interfaces = entry.findall(".//member")
-                zone["interfaces"] = ",".join([interface.text for interface in interfaces if interface.text])
-            elif entry.find("network/external") is not None:
-                zone["type"] = "external"
-                zone["interfaces"] = ""
-            else:
-                zone["type"] = "unknown"
-                zone["interfaces"] = ""
+            # Process each zone
+            processed_zones = []
+            for zone in zones:
+                if not isinstance(zone, dict):
+                    continue
 
-            zones.append(zone)
+                zone_dict = {
+                    "name": zone.get("@name", ""),
+                    "type": "layer3",  # Default to layer3
+                    "location": "vsys1",
+                    "interfaces": [],
+                    "user_identification": False,
+                    "device_identification": False,
+                    "packet_buffer_protection": False,
+                }
 
-        return zones
+                # Extract zone type
+                for zone_type in ["layer3", "layer2", "virtual-wire", "tap"]:
+                    if zone.get(zone_type) is not None:
+                        zone_dict["type"] = zone_type
+                        break
 
-    async def get_security_policies(self) -> list[dict[str, str]]:
-        """Get security policies configured on the firewall.
+                # Extract interfaces
+                zone_type = zone_dict["type"]
+                interface_section = zone.get(zone_type, {})
+                if isinstance(interface_section, dict):
+                    member_list = interface_section.get("member", [])
+                    if member_list:
+                        if isinstance(member_list, list):
+                            zone_dict["interfaces"] = member_list
+                        else:
+                            zone_dict["interfaces"] = [member_list]
 
-        Returns:
-            List of dictionaries containing security policy information.
+                # Extract advanced options
+                network = zone.get("network", {})
+                if isinstance(network, dict):
+                    zone_dict["user_identification"] = network.get("user-acl") is not None
+                    zone_dict["device_identification"] = network.get("device-acl") is not None
+                    zone_dict["packet_buffer_protection"] = network.get("pbf") is not None
 
+                processed_zones.append(zone_dict)
+
+            return processed_zones
+
+        except PanosError:
+            raise
+        except Exception as e:
+            raise PanosOperationError(f"Failed to retrieve security zones: {str(e)}") from e
+
+
+class PANOSClient:
+    """Client for interacting with PAN-OS XML API."""
+
+    def __init__(self, hostname: str, api_key: str) -> None:
+        """Initialize the client.
+
+        Args:
+            hostname: The hostname or IP address of the PAN-OS device
+            api_key: The API key for authentication
         """
-        params = {"type": "config", "action": "get", "xpath": "/config/devices/entry/vsys/entry/rulebase/security/rules"}
+        self.hostname = hostname
+        self.api_key = api_key
+        self.base_url = f"https://{hostname}/api"
+        self.client = httpx.AsyncClient(verify=False)
 
-        root = await self._make_request(params)
-        entries = root.findall(".//entry")
+    async def get_system_info(self) -> SystemInfo:
+        """Get system information from the firewall."""
+        raise NotImplementedError("Method not implemented")
 
-        policies = []
-        for entry in entries:
-            policy = {"name": entry.get("name") or ""}
+    async def get_address_objects(self) -> list[AddressObject]:
+        """Get address objects from the firewall."""
+        raise NotImplementedError("Method not implemented")
 
-            # Source information
-            source_zones = entry.findall(".//from/member")
-            policy["source_zones"] = ",".join([zone.text for zone in source_zones if zone.text])
+    async def get_security_zones(self) -> list[dict[str, Any]]:
+        """Get security zones from the firewall."""
+        raise NotImplementedError("Method not implemented")
 
-            source_addresses = entry.findall(".//source/member")
-            policy["source_addresses"] = ",".join([addr.text for addr in source_addresses if addr.text])
-
-            # Destination information
-            dest_zones = entry.findall(".//to/member")
-            policy["destination_zones"] = ",".join([zone.text for zone in dest_zones if zone.text])
-
-            dest_addresses = entry.findall(".//destination/member")
-            policy["destination_addresses"] = ",".join([addr.text for addr in dest_addresses if addr.text])
-
-            # Application and service information
-            applications = entry.findall(".//application/member")
-            policy["applications"] = ",".join([app.text for app in applications if app.text])
-
-            services = entry.findall(".//service/member")
-            policy["services"] = ",".join([svc.text for svc in services if svc.text])
-
-            # Action
-            action = entry.find("action")
-            if action is not None and action.text is not None:
-                policy["action"] = action.text
-            else:
-                policy["action"] = ""
-
-            # Description
-            description = entry.find("description")
-            if description is not None and description.text is not None:
-                policy["description"] = description.text
-            else:
-                policy["description"] = ""
-
-            policies.append(policy)
-
-        return policies
+    async def close(self) -> None:
+        """Close the HTTP client."""
+        await self.client.aclose()

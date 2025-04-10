@@ -1,226 +1,162 @@
-# Palo Alto Networks MCP Server
+# PAN-OS MCP Server
 
-A Model Context Protocol (MCP) server for interfacing with Palo Alto Networks Next-Generation Firewalls (NGFW) using the `modelcontextprotocol` Python SDK.
-
-## Overview
-
-This package provides an MCP server that enables MCP clients (like Windsurf) to interact with Palo Alto Networks NGFW appliances via their XML API. The server is built using the `FastMCP` abstraction from the `modelcontextprotocol` Python SDK and provides tool-calling capabilities for retrieving firewall configuration data.
+A Model Context Protocol (MCP) server for interacting with Palo Alto Networks firewalls. This server provides tools for retrieving and managing firewall configurations using the PAN-OS XML API.
 
 ## Features
 
-- Retrieve address objects from Palo Alto Networks firewalls
-- Retrieve security zones from Palo Alto Networks firewalls
-- Retrieve security policies from Palo Alto Networks firewalls
-- Get system information from Palo Alto Networks firewalls
-- Built using the `FastMCP` class from the `modelcontextprotocol` Python SDK
-- Supports standard I/O transport for command-based integration
+- **System Information**: Retrieve firewall system details
+- **Address Objects**: List and inspect address objects
+- **Security Zones**: View security zone configurations
+- **Security Policies**: Examine security policy rules
+- **Health Check**: Monitor server and firewall connectivity status
 
 ## Installation
 
 ### Prerequisites
 
-- Python 3.10 or higher
-- `uv` (recommended) or `pip`
+- Python 3.10 or later
+- Access to a Palo Alto Networks firewall
+- PAN-OS API key
 
-### Install from Source
+### Using pip
 
 ```bash
-# Using uv (recommended)
-uv pip install .
-
-# Using pip
 pip install .
+```
+
+### Using uv (recommended)
+
+```bash
+uv pip install .
 ```
 
 ## Configuration
 
-The server requires the following environment variables to be set:
+1. Copy the example environment file:
+   ```bash
+   cp .env.example .env
+   ```
 
-- `PANOS_HOSTNAME`: Hostname or IP address of the Palo Alto Networks NGFW
-- `PANOS_API_KEY`: API key for authenticating with the Palo Alto Networks NGFW
+2. Edit `.env` and set your firewall details:
+   ```bash
+   # Hostname or IP address of your Palo Alto Networks firewall
+   PANOS_HOSTNAME=firewall.example.com
 
-Optional environment variables:
+   # API key for authenticating with the firewall
+   # Generate this in the firewall web interface:
+   # Device > Users > API Key Generation
+   PANOS_API_KEY=your-api-key-here
 
-- `DEBUG`: Set to `true` to enable debug logging (default: `false`)
-
-Example configuration:
-
-```bash
-export PANOS_HOSTNAME="192.168.1.1"
-export PANOS_API_KEY="your-api-key-here"
-```
+   # Enable debug logging (optional)
+   PANOS_DEBUG=false
+   ```
 
 ## Usage
 
-### Running the Server Directly
+### Running the Server
 
 ```bash
-# Using the module
 python -m palo_alto_mcp
-
-# Using the entry point script
-palo-alto-mcp
 ```
 
-### Integration with MCP Clients
+### Available Tools
 
-The server is designed to be used with MCP clients like Windsurf. It follows the command-based integration pattern using the standard I/O transport provided by the SDK.
-
-Example client configuration in `mcp_config.json`:
-
-```json
-{
-  "tools": [
-    {
-      "name": "panos",
-      "command": "palo-alto-mcp",
-      "args": [],
-      "env": {
-        "PANOS_HOSTNAME": "192.168.1.1",
-        "PANOS_API_KEY": "your-api-key-here"
-      }
-    }
-  ]
-}
+#### check_health
+Check server and firewall connectivity status.
+```python
+result = await client.check_health()
 ```
 
-## Available Tools
-
-### `show_system_info`
-
-Get system information from the Palo Alto Networks firewall.
-
-**Example Response:**
-```
-# Palo Alto Networks Firewall System Information
-
-**hostname**: fw01.example.com
-**model**: PA-VM
-**serial**: 0123456789
-**sw-version**: 10.2.3
-...
+#### show_system_info
+Retrieve firewall system information.
+```python
+result = await client.show_system_info()
 ```
 
-### `retrieve_address_objects`
-
-Get address objects configured on the Palo Alto Networks firewall.
-
-**Example Response:**
-```
-# Palo Alto Networks Firewall Address Objects
-
-## web-server
-- **Type**: ip-netmask
-- **Value**: 10.1.1.100/32
-- **Description**: Web Server
-
-## internal-network
-- **Type**: ip-netmask
-- **Value**: 10.1.0.0/16
-- **Description**: Internal Network
+#### retrieve_address_objects
+List configured address objects.
+```python
+result = await client.retrieve_address_objects()
 ```
 
-### `retrieve_security_zones`
-
-Get security zones configured on the Palo Alto Networks firewall.
-
-**Example Response:**
-```
-# Palo Alto Networks Firewall Security Zones
-
-## trust
-- **Type**: layer3
-- **Interfaces**:
-  - ethernet1/1
-  - ethernet1/2
-
-## untrust
-- **Type**: layer3
-- **Interfaces**:
-  - ethernet1/3
+#### retrieve_security_zones
+View security zone configurations.
+```python
+result = await client.retrieve_security_zones()
 ```
 
-### `retrieve_security_policies`
-
-Get security policies configured on the Palo Alto Networks firewall.
-
-**Example Response:**
-```
-# Palo Alto Networks Firewall Security Policies
-
-## allow-outbound
-- **Description**: Allow outbound traffic
-- **Action**: allow
-- **Source Zones**:
-  - trust
-- **Source Addresses**:
-  - any
-- **Destination Zones**:
-  - untrust
-- **Destination Addresses**:
-  - any
-- **Applications**:
-  - web-browsing
-  - ssl
-- **Services**:
-  - application-default
+#### retrieve_security_policies
+Examine security policy rules.
+```python
+result = await client.retrieve_security_policies()
 ```
 
 ## Development
 
-### Setup Development Environment
+### Setting Up Development Environment
 
-```bash
-# Clone the repository
-git clone https://github.com/cdot65/pan-os-mcp.git
-cd pan-os-mcp
+1. Clone the repository:
+   ```bash
+   git clone <repository-url>
+   cd pan-os-mcp
+   ```
 
-# Install development dependencies
-uv pip install -e ".[dev]"
-```
+2. Install development dependencies:
+   ```bash
+   uv pip install -e ".[dev]"
+   ```
 
 ### Running Tests
 
 ```bash
+# Run all tests
 pytest
+
+# Run with coverage
+pytest --cov=palo_alto_mcp
+
+# Run specific test file
+pytest tests/test_server.py
 ```
 
-### Code Quality
+### Code Style
 
+This project uses:
+- `ruff` for linting
+- `black` for code formatting
+- `pyright` for type checking
+
+Run formatters and linters:
 ```bash
-# Run linting
-ruff check .
+# Format code
+black src tests
 
-# Run type checking
-pyright
+# Run linters
+ruff check src tests
+pyright src tests
 ```
 
-## Project Structure
+## Error Handling
 
-```
-palo-alto-mcp/
-├── src/
-│   └── palo_alto_mcp/
-│       ├── __init__.py           # Package initialization
-│       ├── __main__.py           # Command-line entry point
-│       ├── config.py             # Configuration management
-│       ├── server.py             # Main FastMCP server implementation
-│       └── pan_os_api.py         # API client for Palo Alto NGFW XML API
-├── tests/                        # Unit and integration tests
-├── pyproject.toml                # Python package definition
-└── README.md                     # Documentation
-```
+The server uses custom exceptions for different error scenarios:
+
+- `PanosConnectionError`: Connection issues with the firewall
+- `PanosAuthenticationError`: API key or authentication problems
+- `PanosConfigurationError`: Invalid configuration
+- `PanosOperationError`: Failed operations
+
+## Logging
+
+The server uses structured logging via MCP's logging utilities. Debug logging can be enabled by setting `PANOS_DEBUG=true` in your environment.
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Run tests and linters
+5. Submit a pull request
 
 ## License
 
-MIT
-
-## Patterns and Technologies Used
-
-- **FastMCP**: Using the `FastMCP` class from the `modelcontextprotocol` Python SDK for MCP server implementation
-- **Async/Await**: Using Python's async/await pattern for non-blocking I/O operations
-- **Environment Variables**: Configuration via environment variables
-- **Pydantic Settings**: Using `pydantic-settings` for configuration management
-- **Type Hints**: Strong typing with Python type hints
-- **Context Managers**: Using async context managers for resource management
-- **XML Parsing**: Using the built-in `xml.etree.ElementTree` for parsing XML responses
+[Insert your license information here]

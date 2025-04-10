@@ -2,10 +2,10 @@
 
 The PAN-OS API client module (`pan_os_api.py`) is responsible for making requests to the Palo Alto Networks XML API and parsing the responses.
 
-## PanOSAPIClient Class
+## PanosApiClient Class
 
 ```python
-class PanOSAPIClient:
+class PanosApiClient:
     """Client for interacting with the Palo Alto Networks XML API.
 
     This class provides methods for retrieving data from a Palo Alto Networks
@@ -22,7 +22,7 @@ class PanOSAPIClient:
 
 ```python
 def __init__(self, settings: Settings) -> None:
-    """Initialize the PanOSAPIClient.
+    """Initialize the PanosApiClient.
 
     Args:
         settings: Application settings containing NGFW connection information.
@@ -38,11 +38,11 @@ def __init__(self, settings: Settings) -> None:
 The client implements the async context manager protocol, allowing it to be used with the `async with` statement:
 
 ```python
-async def __aenter__(self) -> "PanOSAPIClient":
+async def __aenter__(self) -> "PanosApiClient":
     """Async context manager entry.
 
     Returns:
-        The PanOSAPIClient instance.
+        The PanosApiClient instance.
     """
     return self
 

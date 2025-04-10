@@ -1,223 +1,345 @@
 """Palo Alto Networks MCP Server implementation using FastMCP."""
 
-import logging
-
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp.utilities.logging import get_logger
 
 from palo_alto_mcp.config import get_settings
-from palo_alto_mcp.pan_os_api import PanOSAPIClient
-
-# Configure logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+from palo_alto_mcp.models import (
+    AddressObject,
+    PanosError,
+    SecurityZone,
+    SystemInfo,
 )
-logger = logging.getLogger(__name__)
+from palo_alto_mcp.pan_os_api import PanosApiClient
+
+# Configure logging using MCP's structured logging
+logger = get_logger(__name__)
 
 # Create FastMCP instance
-mcp = FastMCP("PaloAltoMCPServer")
+mcp = FastMCP(
+    "PaloAltoMCPServer",
+    description="MCP Server for interacting with Palo Alto Networks firewalls",
+    version="0.1.0",  # Add version information
+)
+
+
+def format_error_response(error: Exception) -> str:
+    """Format an error response in a consistent way.
+
+    Args:
+        error: The exception that occurred
+
+    Returns:
+        A formatted error message string
+    """
+    if isinstance(error, PanosError):
+        error_type = error.__class__.__name__
+        formatted_msg = f"Error ({error_type}): {str(error)}\n"
+        if error.details:
+            formatted_msg += "\nDetails:\n"
+            for key, value in error.details.items():
+                formatted_msg += f"- {key}: {value}\n"
+        return formatted_msg
+    return f"Error: {str(error)}"
 
 
 @mcp.tool()
-async def show_system_info(ctx: Context) -> str:  # noqa: ARG001
+async def check_health(ctx: Context) -> str:
+    """Check the health of the MCP server and PAN-OS connectivity.
+
+    Args:
+        ctx: The MCP context object for request-specific logging
+
+    Returns:
+        A formatted string containing health check information.
+
+    Raises:
+        PanosConnectionError: If connection to the firewall fails
+        PanosAuthenticationError: If authentication fails
+        PanosOperationError: If the operation fails
+    """
+    logger.info("Performing health check", context=ctx)
+
+    try:
+        settings = get_settings()
+        health_info = [
+            "# PAN-OS MCP Server Health Check\n",
+            f"- **MCP Server Version**: {mcp.version}",
+            f"- **Target Firewall**: {settings.panos_hostname}",
+            "- **Debug Mode**: " + ("Enabled" if settings.debug else "Disabled"),
+        ]
+
+        # Test connectivity by getting system info
+        async with PanosApiClient(settings) as client:
+            system_info_dict = await client.get_system_info()
+            system_info = SystemInfo(**system_info_dict)
+
+            health_info.extend(
+                [
+                    "\n## Firewall Information",
+                    f"- **Hostname**: {system_info.hostname}",
+                    f"- **Model**: {system_info.model}",
+                    f"- **PAN-OS Version**: {system_info.version}",
+                    f"- **Uptime**: {system_info.uptime}",
+                    "- **Connection Status**: Connected",
+                ]
+            )
+
+            if system_info.gp_version:
+                health_info.append(
+                    f"- **GlobalProtect Version**: {system_info.gp_version}"
+                )
+
+        return "\n".join(health_info)
+
+    except PanosError as e:
+        logger.error(
+            "Health check failed",
+            error=str(e),
+            error_type=e.__class__.__name__,
+            details=getattr(e, "details", {}),
+            context=ctx,
+        )
+        return "\n".join(
+            [
+                "# PAN-OS MCP Server Health Check\n",
+                f"- **MCP Server Version**: {mcp.version}",
+                f"- **Target Firewall**: {settings.panos_hostname}",
+                "- **Debug Mode**: " + ("Enabled" if settings.debug else "Disabled"),
+                "\n## Connection Status",
+                "- **Status**: Failed",
+                f"- **Error**: {str(e)}",
+            ]
+        )
+    except Exception as e:
+        logger.error(
+            "Unexpected error during health check",
+            error=str(e),
+            context=ctx,
+        )
+        return format_error_response(e)
+
+
+@mcp.tool()
+async def show_system_info(ctx: Context) -> str:
     """Get system information from the Palo Alto Networks firewall.
+
+    Args:
+        ctx: The MCP context object for request-specific logging
 
     Returns:
         A formatted string containing system information.
 
+    Raises:
+        PanosConnectionError: If connection to the firewall fails
+        PanosAuthenticationError: If authentication fails
+        PanosOperationError: If the operation fails
     """
-    logger.info("Retrieving system information")
+    logger.info("Retrieving system information", context=ctx)
 
     try:
         settings = get_settings()
-        async with PanOSAPIClient(settings) as client:
-            system_info = await client.get_system_info()
+        async with PanosApiClient(settings) as client:
+            system_info_dict = await client.get_system_info()
+
+        # Validate response using our model
+        system_info = SystemInfo(**system_info_dict)
 
         # Format the system information as a readable string
         formatted_info = "# Palo Alto Networks Firewall System Information\n\n"
-        for key, value in system_info.items():
-            formatted_info += f"**{key}**: {value}\n"
+        for field_name, field_value in system_info.model_dump().items():
+            if field_value is not None:  # Only show non-None values
+                formatted_name = field_name.replace("_", " ").title()
+                formatted_info += f"**{formatted_name}**: {field_value}\n"
 
         return formatted_info
+
+    except PanosError as e:
+        logger.error(
+            "Failed to retrieve system information",
+            error=str(e),
+            error_type=e.__class__.__name__,
+            details=getattr(e, "details", {}),
+            context=ctx,
+        )
+        return format_error_response(e)
     except Exception as e:
-        error_msg = f"Error retrieving system information: {str(e)}"
-        logger.error(error_msg)
-        return f"Error: {error_msg}"
+        logger.error(
+            "Unexpected error while retrieving system information",
+            error=str(e),
+            context=ctx,
+        )
+        return format_error_response(e)
 
 
 @mcp.tool()
-async def retrieve_address_objects(ctx: Context) -> str:  # noqa: ARG001
+async def retrieve_address_objects(ctx: Context) -> str:
     """Get address objects configured on the Palo Alto Networks firewall.
+
+    Args:
+        ctx: The MCP context object for request-specific logging
 
     Returns:
         A formatted string containing address object information.
 
+    Raises:
+        PanosConnectionError: If connection to the firewall fails
+        PanosAuthenticationError: If authentication fails
+        PanosOperationError: If the operation fails
     """
-    logger.info("Retrieving address objects")
+    logger.info("Retrieving address objects", context=ctx)
 
     try:
         settings = get_settings()
-        async with PanOSAPIClient(settings) as client:
-            address_objects = await client.get_address_objects()
+        async with PanosApiClient(settings) as client:
+            address_objects_dict = await client.get_address_objects()
 
-        if not address_objects:
+        if not address_objects_dict:
             return "No address objects found on the firewall."
+
+        # Validate and convert all objects using our model
+        address_objects = [AddressObject(**obj) for obj in address_objects_dict]
 
         # Format the address objects as a readable string
         formatted_output = "# Palo Alto Networks Firewall Address Objects\n\n"
 
         # Group address objects by location for better organization
-        objects_by_location: dict[str, list[dict[str, str]]] = {}
+        objects_by_location: dict[str, list[AddressObject]] = {}
         for obj in address_objects:
-            location = obj.get("location", "Unknown")
-            if location not in objects_by_location:
-                objects_by_location[location] = []
-            objects_by_location[location].append(obj)
+            if obj.location not in objects_by_location:
+                objects_by_location[obj.location] = []
+            objects_by_location[obj.location].append(obj)
 
         # Display objects grouped by location
         for location, objects in objects_by_location.items():
             formatted_output += f"## {location.capitalize()} Address Objects\n\n"
 
             for obj in objects:
-                formatted_output += f"### {obj['name']}\n"
-                formatted_output += f"- **Type**: {obj.get('type', 'N/A')}\n"
-                formatted_output += f"- **Value**: {obj.get('value', 'N/A')}\n"
+                formatted_output += f"### {obj.name}\n"
+                formatted_output += f"- **Type**: {obj.type}\n"
+                formatted_output += f"- **Value**: {obj.value}\n"
 
-                if "description" in obj:
-                    formatted_output += f"- **Description**: {obj['description']}\n"
+                if obj.description:
+                    formatted_output += f"- **Description**: {obj.description}\n"
 
-                if "tags" in obj:
-                    formatted_output += f"- **Tags**: {obj['tags']}\n"
+                if obj.tags:
+                    formatted_output += f"- **Tags**: {', '.join(obj.tags)}\n"
 
                 formatted_output += "\n"
 
         return formatted_output
+
+    except PanosError as e:
+        logger.error(
+            "Failed to retrieve address objects",
+            error=str(e),
+            error_type=e.__class__.__name__,
+            details=getattr(e, "details", {}),
+            context=ctx,
+        )
+        return format_error_response(e)
     except Exception as e:
-        error_msg = f"Error retrieving address objects: {str(e)}"
-        logger.error(error_msg)
-        return f"Error: {error_msg}"
+        logger.error(
+            "Unexpected error while retrieving address objects",
+            error=str(e),
+            context=ctx,
+        )
+        return format_error_response(e)
 
 
 @mcp.tool()
-async def retrieve_security_zones(ctx: Context) -> str:  # noqa: ARG001
+async def retrieve_security_zones(ctx: Context) -> str:
     """Get security zones configured on the Palo Alto Networks firewall.
+
+    Args:
+        ctx: The MCP context object for request-specific logging
 
     Returns:
         A formatted string containing security zone information.
 
+    Raises:
+        PanosConnectionError: If connection to the firewall fails
+        PanosAuthenticationError: If authentication fails
+        PanosOperationError: If the operation fails
     """
-    logger.info("Retrieving security zones")
+    logger.info("Retrieving security zones", context=ctx)
 
     try:
         settings = get_settings()
-        async with PanOSAPIClient(settings) as client:
-            zones = await client.get_security_zones()
+        async with PanosApiClient(settings) as client:
+            security_zones_dict = await client.get_security_zones()
 
-        if not zones:
+        if not security_zones_dict:
             return "No security zones found on the firewall."
+
+        # Validate and convert all zones using our model
+        security_zones = [SecurityZone(**zone) for zone in security_zones_dict]
 
         # Format the security zones as a readable string
         formatted_output = "# Palo Alto Networks Firewall Security Zones\n\n"
-        for zone in zones:
-            formatted_output += f"## {zone['name']}\n"
-            formatted_output += f"- **Type**: {zone.get('type', 'N/A')}\n"
 
-            if "interfaces" in zone and zone["interfaces"]:
-                formatted_output += "- **Interfaces**:\n"
-                for interface in zone["interfaces"].split(","):
-                    if interface:
-                        formatted_output += f"  - {interface}\n"
-            else:
-                formatted_output += "- **Interfaces**: None\n"
+        # Group zones by location for better organization
+        zones_by_location: dict[str, list[SecurityZone]] = {}
+        for zone in security_zones:
+            if zone.location not in zones_by_location:
+                zones_by_location[zone.location] = []
+            zones_by_location[zone.location].append(zone)
 
-            formatted_output += "\n"
+        # Display zones grouped by location
+        for location, zones in zones_by_location.items():
+            formatted_output += f"## {location.capitalize()} Security Zones\n\n"
 
-        return formatted_output
-    except Exception as e:
-        error_msg = f"Error retrieving security zones: {str(e)}"
-        logger.error(error_msg)
-        return f"Error: {error_msg}"
+            for zone in zones:
+                formatted_output += f"### {zone.name}\n"
+                formatted_output += f"- **Type**: {zone.type}\n"
 
+                if zone.interfaces:
+                    formatted_output += (
+                        f"- **Interfaces**: {', '.join(zone.interfaces)}\n"
+                    )
 
-@mcp.tool()
-async def retrieve_security_policies(ctx: Context) -> str:  # noqa: ARG001
-    """Get security policies configured on the Palo Alto Networks firewall.
+                formatted_output += f"- **User Identification**: {'Enabled' if zone.user_identification else 'Disabled'}\n"
+                formatted_output += f"- **Device Identification**: {'Enabled' if zone.device_identification else 'Disabled'}\n"
+                formatted_output += f"- **Packet Buffer Protection**: {'Enabled' if zone.packet_buffer_protection else 'Disabled'}\n"
 
-    Returns:
-        A formatted string containing security policy information.
-
-    """
-    logger.info("Retrieving security policies")
-
-    try:
-        settings = get_settings()
-        async with PanOSAPIClient(settings) as client:
-            policies = await client.get_security_policies()
-
-        if not policies:
-            return "No security policies found on the firewall."
-
-        # Format the security policies as a readable string
-        formatted_output = "# Palo Alto Networks Firewall Security Policies\n\n"
-        for policy in policies:
-            formatted_output += f"## {policy['name']}\n"
-
-            if "description" in policy and policy["description"]:
-                formatted_output += f"- **Description**: {policy['description']}\n"
-
-            formatted_output += f"- **Action**: {policy.get('action', 'N/A')}\n"
-
-            formatted_output += "- **Source Zones**:\n"
-            for zone in policy.get("source_zones", "").split(","):
-                if zone:
-                    formatted_output += f"  - {zone}\n"
-
-            formatted_output += "- **Source Addresses**:\n"
-            for addr in policy.get("source_addresses", "").split(","):
-                if addr:
-                    formatted_output += f"  - {addr}\n"
-
-            formatted_output += "- **Destination Zones**:\n"
-            for zone in policy.get("destination_zones", "").split(","):
-                if zone:
-                    formatted_output += f"  - {zone}\n"
-
-            formatted_output += "- **Destination Addresses**:\n"
-            for addr in policy.get("destination_addresses", "").split(","):
-                if addr:
-                    formatted_output += f"  - {addr}\n"
-
-            formatted_output += "- **Applications**:\n"
-            for app in policy.get("applications", "").split(","):
-                if app:
-                    formatted_output += f"  - {app}\n"
-
-            formatted_output += "- **Services**:\n"
-            for svc in policy.get("services", "").split(","):
-                if svc:
-                    formatted_output += f"  - {svc}\n"
-
-            formatted_output += "\n"
+                formatted_output += "\n"
 
         return formatted_output
+
+    except PanosError as e:
+        logger.error(
+            "Failed to retrieve security zones",
+            error=str(e),
+            error_type=e.__class__.__name__,
+            details=getattr(e, "details", {}),
+            context=ctx,
+        )
+        return format_error_response(e)
     except Exception as e:
-        error_msg = f"Error retrieving security policies: {str(e)}"
-        logger.error(error_msg)
-        return f"Error: {error_msg}"
+        logger.error(
+            "Unexpected error while retrieving security zones",
+            error=str(e),
+            context=ctx,
+        )
+        return format_error_response(e)
+
+
+async def shutdown() -> None:
+    """Perform any necessary cleanup before shutting down."""
+    logger.info("Shutting down MCP server")
 
 
 def main() -> None:
     """Run the MCP server."""
-    try:
-        # Validate settings on startup
-        get_settings()
+    import asyncio
+    import sys
 
-        # Start the server
-        logger.info("Starting Palo Alto Networks MCP Server")
-        mcp.run()
-    except Exception as e:
-        logger.error(f"Failed to start server: {str(e)}")
-        raise
+    from mcp import run
+
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+    run(mcp, shutdown_handler=shutdown)
 
 
 if __name__ == "__main__":

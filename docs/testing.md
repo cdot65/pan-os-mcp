@@ -8,7 +8,7 @@ Unit tests focus on testing individual functions and classes in isolation.
 
 ### Testing the PAN-OS API Client
 
-The `PanOSAPIClient` class should be tested with mocked HTTP responses to avoid making actual API calls during testing.
+The `PanosApiClient` class should be tested with mocked HTTP responses to avoid making actual API calls during testing.
 
 ```python
 import pytest
@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ET
 from unittest.mock import AsyncMock, patch
 
 from palo_alto_mcp.config import Settings
-from palo_alto_mcp.pan_os_api import PanOSAPIClient
+from palo_alto_mcp.pan_os_api import PanosApiClient
 
 @pytest.mark.asyncio
 async def test_get_address_objects():
@@ -48,7 +48,7 @@ async def test_get_address_objects():
         mock_instance.get.return_value.raise_for_status = AsyncMock()
 
         # Create client and call method
-        async with PanOSAPIClient(settings) as client:
+        async with PanosApiClient(settings) as client:
             address_objects = await client.get_address_objects()
 
         # Assert results
@@ -61,7 +61,7 @@ async def test_get_address_objects():
 
 ### Testing the Server Tools
 
-The server tools should be tested with a mocked `PanOSAPIClient`.
+The server tools should be tested with a mocked `PanosApiClient`.
 
 ```python
 import pytest
@@ -71,8 +71,8 @@ from palo_alto_mcp.server import retrieve_address_objects
 
 @pytest.mark.asyncio
 async def test_retrieve_address_objects():
-    # Mock the PanOSAPIClient
-    with patch("palo_alto_mcp.server.PanOSAPIClient") as mock_client_class:
+    # Mock the PanosApiClient
+    with patch("palo_alto_mcp.server.PanosApiClient") as mock_client_class:
         mock_client = AsyncMock()
         mock_client_class.return_value.__aenter__.return_value = mock_client
 

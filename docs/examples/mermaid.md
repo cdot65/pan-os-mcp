@@ -129,7 +129,7 @@ classDiagram
         +tool()
     }
     
-    class PANOSAPIClient {
+    class PanosApiClient {
         +get_system_info()
         +get_address_objects()
     }
@@ -139,6 +139,6 @@ classDiagram
         +PANOS_API_KEY
     }
     
-    FastMCP --> PANOSAPIClient
+    FastMCP --> PanosApiClient
     FastMCP --> Settings
 ```

@@ -1,5 +1,5 @@
-site_name: Palo Alto Networks MCP Server
-site_description: Documentation for the Palo Alto Networks MCP Server
+site_name: PAN-OS MCP Server
+site_description: Documentation for the PAN-OS Model Context Protocol Server
 site_url: https://cdot65.github.io/pan-os-mcp
 site_author: Calvin Remsburg
 copyright: Copyright &copy; 2025 Palo Alto Networks
@@ -14,11 +14,13 @@ theme:
   favicon: images/logo.svg
   features:
     - navigation.instant
-    - navigation.tabs
-    - navigation.sections
-    - navigation.top
     - navigation.tracking
-    - navigation.footer
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.share
+    - toc.follow
     - content.code.copy
     - content.code.annotate
   palette:
@@ -37,20 +39,9 @@ theme:
 
 nav:
   - Home: index.md
-  - User Guide:
-      - Installation: guide/installation.md
-      - Configuration: guide/configuration.md
-      - Usage: guide/usage.md
   - Architecture: architecture.md
-  - Module Documentation:
-      - Server: modules/server.md
-      - PAN-OS API Client: modules/pan_os_api.md
-      - Configuration: modules/config.md
-  - Development:
-      - Contributing: contributing.md
-      - Testing Strategy: testing.md
-  - Examples:
-      - Mermaid Diagrams: examples/mermaid.md
+  - API Reference: api.md
+  - Improvements: improvements.md
 
 # Explicitly set the layout for home page with customizations
 not_in_nav: |
@@ -58,32 +49,23 @@ not_in_nav: |
   STYLE_GUIDE.md
 
 markdown_extensions:
-  - admonition
-  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
           class: mermaid
-          format: !!python/name:pymdownx.superfences.fence_code_format
-  - pymdownx.tabbed:
-      alternate_style: true
-  - pymdownx.highlight:
-      anchor_linenums: true
-      line_spans: __span
-      pygments_lang_class: true
-  - pymdownx.inlinehilite
-  - pymdownx.snippets
-  - pymdownx.tasklist:
-      custom_checkbox: true
-  - pymdownx.emoji
+  - admonition
   - footnotes
   - toc:
       permalink: true
-      toc_depth: 4
-  - attr_list
-  - def_list
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
   - tables
-  - md_in_html
+  - attr_list
 
 extra_css:
   - css/termynal.css

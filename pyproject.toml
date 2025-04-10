@@ -20,6 +20,8 @@ pydantic-settings = ">=2.8.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.3.5"
+pytest-cov = ">=4.1.0"
+pytest-watch = ">=4.2.0"
 ruff = ">=0.11.4"
 pyright = ">=1.1.398"
 mypy = ">=1.15.0"

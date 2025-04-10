@@ -7,7 +7,7 @@ The server module (`server.py`) is the core of the Palo Alto Networks MCP Server
 ```python
 from mcp.server.fastmcp import Context, FastMCP
 from palo_alto_mcp.config import get_settings
-from palo_alto_mcp.pan_os_api import PanOSAPIClient
+from palo_alto_mcp.pan_os_api import PanosApiClient
 
 # Create FastMCP instance
 mcp = FastMCP("PaloAltoMCPServer")
@@ -96,7 +96,7 @@ async def retrieve_address_objects(ctx: Context) -> str:  # noqa: ARG001
 
     try:
         settings = get_settings()
-        async with PanOSAPIClient(settings) as client:
+        async with PanosApiClient(settings) as client:
             address_objects = await client.get_address_objects()
 
         if not address_objects:
